@@ -16,3 +16,9 @@ resource "azurerm_storage_account" "tfstate" {
     purpose = "terraform-state"
   }
 }
+
+resource "azurerm_storage_container" "tfstate" {
+  name                  = var.state_container_name
+  storage_account_id    = azurerm_storage_account.tfstate.id
+  container_access_type = "private"
+}
