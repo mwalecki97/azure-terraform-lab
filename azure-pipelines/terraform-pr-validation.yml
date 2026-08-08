@@ -50,3 +50,58 @@ steps:
     command: plan
     workingDirectory: environments/dev
     environmentServiceNameAzureRM: sc-azure-lab-terraform-dev
+    commandOptions: '-out=tfplan'
+
+- script: |
+    terraform show -no-color tfplan > tfplan.txt
+  workingDirectory: environments/dev
+  displayName: Render Terraform Plan
+
+- task: PowerShell@2
+  displayName: Post Terraform Plan to PR
+  condition: succeeded()
+  inputs:
+    targetType: inline
+    pwsh: true
+    script: |
+      $planPath = "$(System.DefaultWorkingDirectory)/environments/dev/tfplan.txt"
+      $plan = Get-Content $planPath -Raw
+
+      $comment = @"
+      ## Terraform DEV validation
+
+      ✅ Terraform fmt passed
+      ✅ Terraform init passed
+      ✅ Terraform validate passed
+      ✅ Terraform plan completed
+
+      ### Terraform Plan
+
+      ``````text
+      $plan
+      ``````
+      "@
+
+      $body = @{
+        comments = @(
+          @{
+            parentCommentId = 0
+            content = $comment
+            commentType = 1
+          }
+        )
+        status = 1
+      } | ConvertTo-Json -Depth 10
+
+      $uri = "$(System.CollectionUri)$(System.TeamProject)/_apis/git/repositories/$(Build.Repository.ID)/pullRequests/$(System.PullRequest.PullRequestId)/threads?api-version=7.1"
+
+      Invoke-RestMethod `
+        -Uri $uri `
+        -Method Post `
+        -Headers @{
+          Authorization = "Bearer $env:SYSTEM_ACCESSTOKEN"
+        } `
+        -ContentType "application/json" `
+        -Body $body
+  env:
+    SYSTEM_ACCESSTOKEN: $(System.AccessToken)
