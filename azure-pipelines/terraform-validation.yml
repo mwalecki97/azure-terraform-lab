@@ -1,0 +1,123 @@
+trigger: none
+
+pr:
+  branches:
+    include:
+      - master
+
+
+parameters:
+# Environment used for Terraform validation and backend selection
+- name: environment
+  displayName: Terraform environment
+  type: string
+  default: dev
+  values:
+    - dev
+    - uat
+    - prod
+
+
+pool:
+  vmImage: ubuntu-latest
+
+
+variables:
+# Terraform CLI version used in CI validation
+  terraformVersion: '1.10.5'
+
+
+steps:
+
+- task: TerraformInstaller@1
+  displayName: Install Terraform
+  inputs:
+    terraformVersion: $(terraformVersion)
+
+
+- script: terraform fmt -check -recursive
+  displayName: Terraform format check
+
+
+- task: TerraformTaskV4@4
+  displayName: Terraform Init
+  inputs:
+    provider: azurerm
+    command: init
+    workingDirectory: environments/${{ parameters.environment }}
+    backendServiceArm: sc-azure-lab-terraform-${{ parameters.environment }}
+    backendAzureRmResourceGroupName: rg-tfstate-azure-lab-01
+    backendAzureRmStorageAccountName: satfstateazurelab01
+    backendAzureRmContainerName: tfstate
+    backendAzureRmKey: environments/${{ parameters.environment }}/terraform.tfstate
+
+
+- task: TerraformTaskV4@4
+  displayName: Terraform Validate
+  inputs:
+    provider: azurerm
+    command: validate
+    workingDirectory: environments/${{ parameters.environment }}
+
+- task: TerraformTaskV4@4
+  displayName: Terraform Plan
+  inputs:
+    provider: azurerm
+    command: plan
+    workingDirectory: environments/${{ parameters.environment }}
+    environmentServiceNameAzureRM: sc-azure-lab-terraform-${{ parameters.environment }}
+    commandOptions: '-out=tfplan'
+
+- script: |
+    terraform show -no-color tfplan > tfplan.txt
+  workingDirectory: environments/${{ parameters.environment }}
+  displayName: Render Terraform Plan
+
+- task: PowerShell@2
+  displayName: Post Terraform Plan to PR
+  condition: succeeded()
+  inputs:
+    targetType: inline
+    pwsh: true
+    script: |
+      $planPath = "$(System.DefaultWorkingDirectory)/environments/${{ parameters.environment }}/tfplan.txt"
+      $plan = Get-Content $planPath -Raw
+
+      $comment = @"
+      ## Terraform ${{ parameters.environment }} validation
+
+      ✅ Terraform fmt passed
+      ✅ Terraform init passed
+      ✅ Terraform validate passed
+      ✅ Terraform plan completed
+
+      ### Terraform Plan
+
+      ``````text
+      $plan
+      ``````
+      "@
+
+      $body = @{
+        comments = @(
+          @{
+            parentCommentId = 0
+            content = $comment
+            commentType = 1
+          }
+        )
+        status = 1
+      } | ConvertTo-Json -Depth 10
+
+      $uri = "$(System.CollectionUri)$(System.TeamProject)/_apis/git/repositories/$(Build.Repository.ID)/pullRequests/$(System.PullRequest.PullRequestId)/threads?api-version=7.1"
+
+      Invoke-RestMethod `
+        -Uri $uri `
+        -Method Post `
+        -Headers @{
+          Authorization = "Bearer $env:SYSTEM_ACCESSTOKEN"
+        } `
+        -ContentType "application/json" `
+        -Body $body
+  env:
+    SYSTEM_ACCESSTOKEN: $(System.AccessToken)
