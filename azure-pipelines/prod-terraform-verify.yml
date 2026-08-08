@@ -1,0 +1,107 @@
+trigger: none
+
+pr:
+  branches:
+    include:
+      - master
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  terraformVersion: '1.10.5'
+
+steps:
+
+- task: TerraformInstaller@1
+  displayName: Install Terraform
+  inputs:
+    terraformVersion: $(terraformVersion)
+
+
+- script: terraform fmt -check -recursive
+  displayName: Terraform format check
+
+
+- task: TerraformTaskV4@4
+  displayName: Terraform Init
+  inputs:
+    provider: azurerm
+    command: init
+    workingDirectory: environments/prod
+    backendServiceArm: sc-azure-lab-terraform-prod
+    backendAzureRmResourceGroupName: rg-tfstate-azure-lab-01
+    backendAzureRmStorageAccountName: satfstateazurelab01
+    backendAzureRmContainerName: tfstate
+    backendAzureRmKey: environments/prod/terraform.tfstate
+
+
+- task: TerraformTaskV4@4
+  displayName: Terraform Validate
+  inputs:
+    provider: azurerm
+    command: validate
+    workingDirectory: environments/prod
+
+- task: TerraformTaskV4@4
+  displayName: Terraform Plan
+  inputs:
+    provider: azurerm
+    command: plan
+    workingDirectory: environments/prod
+    environmentServiceNameAzureRM: sc-azure-lab-terraform-prod
+    commandOptions: '-out=tfplan'
+
+- script: |
+    terraform show -no-color tfplan > tfplan.txt
+  workingDirectory: environments/prod
+  displayName: Render Terraform Plan
+
+- task: PowerShell@2
+  displayName: Post Terraform Plan to PR
+  condition: succeeded()
+  inputs:
+    targetType: inline
+    pwsh: true
+    script: |
+      $planPath = "$(System.DefaultWorkingDirectory)/environments/prod/tfplan.txt"
+      $plan = Get-Content $planPath -Raw
+
+      $comment = @"
+      ## Terraform UAT validation
+
+      ✅ Terraform fmt passed
+      ✅ Terraform init passed
+      ✅ Terraform validate passed
+      ✅ Terraform plan completed
+
+      ### Terraform Plan
+
+      ``````text
+      $plan
+      ``````
+      "@
+
+      $body = @{
+        comments = @(
+          @{
+            parentCommentId = 0
+            content = $comment
+            commentType = 1
+          }
+        )
+        status = 1
+      } | ConvertTo-Json -Depth 10
+
+      $uri = "$(System.CollectionUri)$(System.TeamProject)/_apis/git/repositories/$(Build.Repository.ID)/pullRequests/$(System.PullRequest.PullRequestId)/threads?api-version=7.1"
+
+      Invoke-RestMethod `
+        -Uri $uri `
+        -Method Post `
+        -Headers @{
+          Authorization = "Bearer $env:SYSTEM_ACCESSTOKEN"
+        } `
+        -ContentType "application/json" `
+        -Body $body
+  env:
+    SYSTEM_ACCESSTOKEN: $(System.AccessToken)
