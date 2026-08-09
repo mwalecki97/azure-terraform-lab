@@ -95,10 +95,8 @@ steps:
 
 
       if (-not $env:SYSTEM_PULLREQUEST_PULLREQUESTID) {
-
-        Write-Host "No Pull Request context found. Skipping PR comment."
-        exit 0
-
+          Write-Host "No Pull Request context found. Skipping PR comment."
+          exit 0
       }
 
 
@@ -106,10 +104,8 @@ steps:
 
 
       if (!(Test-Path $planPath)) {
-
-        Write-Error "Terraform plan output file not found: $planPath"
-        exit 1
-
+          Write-Error "Terraform plan output file not found: $planPath"
+          exit 1
       }
 
 
@@ -125,6 +121,3 @@ steps:
 ✅ Terraform plan completed  
 
 ### Terraform Plan
-
-````text
-$plan
