@@ -152,6 +152,12 @@ steps:
         -ContentType "application/json" `
         -Body $body
 
+- task: PublishPipelineArtifact@1
+  displayName: Publish Terraform Plan Artifact
+  inputs:
+    targetPath: '$(System.DefaultWorkingDirectory)/environments/${{ parameters.environment }}/tfplan'
+    ArtifactName: 'TerraformPlan'
+
 
   env:
     SYSTEM_ACCESSTOKEN: $(System.AccessToken)
